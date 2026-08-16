@@ -193,6 +193,74 @@ router.get('/cycle/test', requireAdminAuth, async (req, res) => {
   }
 });
 
+router.get('/cycle/run', requireAdminAuth, async (req, res) => {
+  try {
+    const constitution = await loadConfigConstitution().catch(() => null);
+    const agents = loadAgentPool(constitution);
+    const manifestSummary = constitution
+      ? {
+          id: constitution.id || 'manifest',
+          version: constitution.version || 'unknown',
+          hash: require('crypto').createHash('sha256').update(JSON.stringify(constitution)).digest('hex'),
+        }
+      : null;
+
+    return res.type('text/html').send(`
+      <html>
+        <head><title>Deliberation Cycle Run</title></head>
+        <body style="font-family: sans-serif; max-width: 900px; margin: 2em auto;">
+          <h1>Deliberation Cycle Run</h1>
+          <p><a href="/dashboard">Back to Dashboard</a></p>
+          <p><strong>Manifest:</strong> ${manifestSummary ? `${manifestSummary.id} @ ${manifestSummary.version}` : 'none'}</p>
+          <p><strong>Agents:</strong> ${agents.map((agent) => `${agent.label} (${agent.id})`).join(', ')}</p>
+          <form method="post" action="/cycle/run">
+            <label>Prompt:<br />
+              <textarea name="prompt" rows="6" cols="80" placeholder="Propose a new action for the network."></textarea>
+            </label><br /><br />
+            <label>Max messages: <input type="number" name="max_messages" min="2" max="20" value="6" /></label><br /><br />
+            <label><input type="checkbox" name="use_manifest" checked /> Use loaded manifest</label><br /><br />
+            <button type="submit">Run Cycle</button>
+          </form>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    return res.status(500).type('text/html').send(`Run page error: ${err.message}`);
+  }
+});
+
+router.post('/cycle/run', requireAdminAuth, async (req, res) => {
+  try {
+    const prompt = req.body && req.body.prompt ? String(req.body.prompt).trim() : 'Propose a new action for the network.';
+    const useManifest = Boolean(req.body && (req.body.use_manifest === 'on' || req.body.use_manifest === 'true' || req.body.use_manifest === true));
+    const maxMessages = req.body && req.body.max_messages ? Number(req.body.max_messages) : null;
+    const constitution = useManifest ? await loadConfigConstitution().catch(() => null) : null;
+    const manifest = constitution || null;
+    const cycleManifest = manifest && maxMessages ? { ...manifest, rules: { ...(manifest.rules || {}), ...(manifest.policy || {}), max_messages: maxMessages } } : (constitution || null);
+    const result = await simulateDeliberationCycle({ prompt, use_manifest: useManifest, constitution: cycleManifest });
+
+    return res.type('text/html').send(`
+      <html>
+        <head><title>Deliberation Cycle Result</title></head>
+        <body style="font-family: sans-serif; max-width: 1000px; margin: 2em auto;">
+          <h1>Deliberation Cycle Result</h1>
+          <p><a href="/dashboard">Back to Dashboard</a> | <a href="/cycle/run">Run Again</a></p>
+          <p><strong>Prompt:</strong> ${result.prompt}</p>
+          <p><strong>Initiator:</strong> ${result.initiator ? `${result.initiator.label} (${result.initiator.id})` : 'n/a'}</p>
+          <p><strong>Respondent:</strong> ${result.respondent ? `${result.respondent.label} (${result.respondent.id})` : 'n/a'}</p>
+          <p><strong>Manifest used:</strong> ${result.manifest_used ? 'yes' : 'no'}</p>
+          <p><strong>Max messages:</strong> ${result.max_message_limit || 'none'}</p>
+          ${result.manifest ? `<p><strong>Manifest:</strong> ${result.manifest.id} @ ${result.manifest.version} (${result.manifest.hash})</p>` : ''}
+          <h2>Ledger entries</h2>
+          <pre>${JSON.stringify(result.entries, null, 2)}</pre>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    return res.status(500).type('text/html').send(`Cycle run failed: ${err.message}`);
+  }
+});
+
 router.get('/cycle/test/browser', requireAdminAuth, async (req, res) => {
   try {
     const result = await simulateDeliberationCycle({ prompt: req.query.prompt });
@@ -747,6 +815,7 @@ router.get('/dashboard', async (req, res) => {
             <li><a href="/ledger">/ledger</a></li>
             <li><a href="/ledger/test">/ledger/test</a></li>
             <li><a href="/cycle/test">/cycle/test</a></li>
+            <li><a href="/cycle/run">/cycle/run</a></li>
             <li><a href="/cycle/status">/cycle/status</a></li>
             <li><a href="/setup">/setup</a></li>
             
