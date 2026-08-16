@@ -34,6 +34,7 @@ router.get('/admin/login', (req, res) => {
           <label>Admin token: <input name="admin_token" type="password" size="70" autocomplete="off" /></label><br /><br />
           <button type="submit">Sign In</button>
         </form>
+        <p><a href="/dashboard">Back to Dashboard</a></p>
       </body>
     </html>
   `);
@@ -53,7 +54,7 @@ router.post('/admin/login', (req, res) => {
         <body>
           <h1>Login failed</h1>
           <p>Invalid admin token.</p>
-          <p><a href="/admin/login">Try again</a></p>
+          <p><a href="/admin/login">Try again</a> | <a href="/dashboard">Back to Dashboard</a></p>
         </body>
       </html>
     `);
@@ -126,6 +127,7 @@ router.get('/ledger/test', requireAdminAuth, (req, res) => {
           <label>Content: <input name="content_plain" value="signed test from browser" size="60"/></label><br /><br />
           <button type="submit">Create Signed Ledger Record</button>
         </form>
+        <p><a href="/dashboard">Back to Dashboard</a></p>
       </body>
     </html>
   `);
@@ -149,7 +151,7 @@ router.post('/ledger/test/browser', requireAdminAuth, async (req, res) => {
         <body>
           <h1>Ledger Test Result</h1>
           <pre>${JSON.stringify(entry, null, 2)}</pre>
-          <p><a href="/ledger/test">Back</a></p>
+          <p><a href="/ledger/test">Back</a> | <a href="/dashboard">Back to Dashboard</a></p>
         </body>
       </html>
     `);
@@ -200,7 +202,7 @@ router.get('/cycle/test/browser', requireAdminAuth, async (req, res) => {
         <body>
           <h1>Deliberation Cycle Test Result</h1>
           <pre>${JSON.stringify(result, null, 2)}</pre>
-          <p><a href="/ledger/test">Back</a></p>
+          <p><a href="/ledger/test">Back</a> | <a href="/dashboard">Back to Dashboard</a></p>
         </body>
       </html>
     `);
@@ -237,27 +239,134 @@ const writeEnvFile = (updates = {}) => {
   return envPath;
 };
 
-const renderSetupPage = ({ displayedJson, errorMessage, successMessage, viewMode = false, latestExists = false, latestSavedAt = null }) => {
+const renderSetupPage = ({
+  displayedJson,
+  errorMessage,
+  successMessage,
+  viewMode = false,
+  confirmMode = false,
+  latestExists = false,
+  latestSavedAt = null,
+  ledgerStatus = null,
+  envWrittenKeys = [],
+} = {}) => {
+  const ledgerStatusHtml = ledgerStatus
+    ? `
+      <div style="background: #f0f8ff; padding: 1em; border: 1px solid #0066cc; border-radius: 4px; margin: 1em 0;">
+        <h3 style="margin-top: 0;">Fallback Ledger Status</h3>
+        <p><strong>Ledger Available:</strong> ${ledgerStatus.available ? 'Yes' : 'No'}</p>
+        <p><strong>Ledger Type:</strong> ${ledgerStatus.type}</p>
+        <p><strong>Ledger Height:</strong> ${ledgerStatus.height} records</p>
+        <p><strong>Data Directory:</strong> ${ledgerStatus.dataDir}</p>
+        <p><strong>Writable:</strong> ${ledgerStatus.writable ? 'Yes' : 'No'}</p>
+      </div>
+    `
+    : '';
+
+  const plesk = `
+    <div style="background: #fffacd; padding: 1em; border: 1px solid #daa520; border-radius: 4px; margin: 1em 0;">
+      <h3 style="margin-top: 0;">📋 Plesk Setup Guide</h3>
+      <ol>
+        <li><strong>Admin Token:</strong> Enter a secure password. Used for all board operations.</li>
+        <li><strong>Constitution JSON:</strong> Paste your initial network constitution (valid JSON required).</li>
+        <li><strong>Optional Secrets:</strong> Master key and node private key can be added now or later.</li>
+        <li><strong>Node Identity:</strong> Leave defaults or customize Node ID and version.</li>
+      </ol>
+      <p style="margin-bottom: 0;"><em>All values are written to .env and loaded on restart.</em></p>
+    </div>
+  `;
+
+  if (confirmMode && envWrittenKeys.length > 0) {
+    return `
+      <html>
+        <head><title>Setup Confirmation - Dencken</title></head>
+        <body style="font-family: sans-serif; max-width: 900px; margin: 2em auto;">
+          <h1>✓ Setup Confirmed</h1>
+          ${successMessage ? `<div style="color: darkgreen; padding: 1em; border: 1px solid green; background: #ecffe3; border-radius: 4px;">${successMessage}</div>` : ''}
+          <h2>Configuration Written</h2>
+          <p>The following values have been written to your .env file:</p>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr style="background: #f5f5f5;">
+              <th style="text-align: left; padding: 0.5em; border: 1px solid #ddd;">Setting</th>
+              <th style="text-align: left; padding: 0.5em; border: 1px solid #ddd;">Status</th>
+            </tr>
+            ${envWrittenKeys.map(key => `
+              <tr>
+                <td style="padding: 0.5em; border: 1px solid #ddd;">${key}</td>
+                <td style="padding: 0.5em; border: 1px solid #ddd;">✓ Written</td>
+              </tr>
+            `).join('')}
+          </table>
+          ${ledgerStatusHtml}
+          <h2>Next Steps</h2>
+          <ul>
+            <li>Restart your Plesk Node application to load the new .env values.</li>
+            <li>Visit <a href="/dashboard">/dashboard</a> to confirm the setup.</li>
+            <li>Use <a href="/ledger/test">/ledger/test</a> to verify ledger signing works.</li>
+            <li>Test <a href="/cycle/test">/cycle/test</a> to run a deliberation cycle.</li>
+          </ul>
+          <p><a href="/dashboard">Continue to Dashboard</a></p>
+        </body>
+      </html>
+    `;
+  }
+
+  if (viewMode && displayedJson) {
+    return `
+      <html>
+        <head><title>View Constitution - Dencken</title></head>
+        <body style="font-family: sans-serif; max-width: 900px; margin: 2em auto;">
+          <h1>Latest Constitution</h1>
+          <p>Saved at <strong>${latestSavedAt}</strong></p>
+          <h2>Content</h2>
+          <pre style="white-space: pre-wrap; word-break: break-word; background:#f7f7f7; padding:1em; overflow-x: auto;">${displayedJson}</pre>
+          <p><a href="/setup">Back to Setup</a> | <a href="/dashboard">Dashboard</a></p>
+        </body>
+      </html>
+    `;
+  }
+
   return `
     <html>
-      <head><title>Constitution Setup</title></head>
-      <body>
-        <h1>Constitution Setup</h1>
-        ${errorMessage ? `<div style="color: darkred; padding: 1em; border: 1px solid red; background: #ffecec;">${errorMessage}</div>` : ''}
-        ${successMessage ? `<div style="color: darkgreen; padding: 1em; border: 1px solid green; background: #ecffe3;">${successMessage}</div>` : ''}
-        ${latestExists ? `<p>Latest constitution available${latestSavedAt ? ` (saved at ${latestSavedAt})` : ''}.</p>` : '<p>No constitution saved yet.</p>'}
-        ${viewMode && displayedJson ? `<h2>Latest Constitution</h2><pre style="white-space: pre-wrap; word-break: break-word; background:#f7f7f7; padding:1em;">${displayedJson}</pre>` : ''}
-        <form method="post" action="" style="max-width:900px; margin-top:1rem;">
-          <label>Admin token (required): <input name="admin_token" type="password" size="70" autocomplete="off" value="${process.env.BOARD_PASS || ''}"/></label><br /><br />
-          <label>Master key (optional): <input name="master_key" type="password" size="70" autocomplete="off" value="${process.env.MASTER_KEY || ''}"/></label><br /><br />
-          <label>Node private key (optional): <input name="node_private_key" type="password" size="70" autocomplete="off" value="${process.env.NODE_PRIVATE_KEY || ''}"/></label><br /><br />
-          <label>Node ID (optional): <input name="node_id" size="50" value="${process.env.NODE_ID || 'server-node-0'}"/></label><br /><br />
-          <label>Brief version (optional): <input name="brief_version" size="20" value="${process.env.BRIEF_VERSION || '0.0.1'}"/></label><br /><br />
-          <label>Constitution JSON:<br /><textarea name="constitution" rows="20" cols="80"></textarea></label><br /><br />
-          <button type="submit" name="action" value="update">Update</button>
-          <button type="submit" name="action" value="view">View</button>
+      <head><title>Dencken Network Setup - Step 3</title></head>
+      <body style="font-family: sans-serif; max-width: 900px; margin: 2em auto;">
+        <h1>⚙️ Dencken Network Setup - Step 3</h1>
+        <p style="font-size: 0.9em; color: #666;">Encryption module + setup dashboard</p>
+        ${errorMessage ? `<div style="color: darkred; padding: 1em; border: 1px solid red; background: #ffecec; border-radius: 4px;">${errorMessage}</div>` : ''}
+        ${ledgerStatusHtml}
+        ${plesk}
+        <h2>Network Constitution</h2>
+        <form method="post" action="" style="margin-top:2rem;">
+          <fieldset style="padding: 1em; border: 1px solid #ccc; border-radius: 4px;">
+            <legend><strong>Admin & Identity</strong></legend>
+            <label>Admin Token (required):</label><br />
+            <input name="admin_token" type="password" size="70" placeholder="Enter secure password" autocomplete="off" value="${process.env.BOARD_PASS || ''}" style="width: 100%; padding: 0.5em; margin-bottom: 1em; box-sizing: border-box;"/>
+            
+            <label>Master Key (optional):</label><br />
+            <input name="master_key" type="password" size="70" placeholder="Leave blank if not needed" autocomplete="off" value="${process.env.MASTER_KEY || ''}" style="width: 100%; padding: 0.5em; margin-bottom: 1em; box-sizing: border-box;"/>
+            
+            <label>Node Private Key (optional):</label><br />
+            <input name="node_private_key" type="password" size="70" placeholder="Leave blank if not needed" autocomplete="off" value="${process.env.NODE_PRIVATE_KEY || ''}" style="width: 100%; padding: 0.5em; margin-bottom: 1em; box-sizing: border-box;"/>
+            
+            <label>Node ID:</label><br />
+            <input name="node_id" size="50" placeholder="server-node-0" value="${process.env.NODE_ID || 'server-node-0'}" style="width: 100%; padding: 0.5em; margin-bottom: 1em; box-sizing: border-box;"/>
+            
+            <label>Brief Version:</label><br />
+            <input name="brief_version" size="20" placeholder="0.0.1" value="${process.env.BRIEF_VERSION || '0.0.1'}" style="width: 100%; padding: 0.5em; margin-bottom: 1em; box-sizing: border-box;"/>
+          </fieldset>
+          
+          <fieldset style="padding: 1em; border: 1px solid #ccc; border-radius: 4px; margin-top: 1em;">
+            <legend><strong>Constitution JSON</strong></legend>
+            <p style="font-size: 0.9em; color: #666;">Paste your network constitution as valid JSON. This defines the network's policy boundaries.</p>
+            <textarea name="constitution" rows="20" cols="80" placeholder='{"version": "0.0.1", "policy": "..."}' style="width: 100%; padding: 0.5em; font-family: monospace; box-sizing: border-box;"></textarea>
+          </fieldset>
+          
+          <div style="margin-top: 2em; text-align: center;">
+            <button type="submit" name="action" value="update" style="padding: 0.75em 2em; font-size: 1em; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 1em;">Save & Confirm Setup</button>
+            <button type="submit" name="action" value="view" style="padding: 0.75em 2em; font-size: 1em; background: #666; color: white; border: none; border-radius: 4px; cursor: pointer;">View Latest Constitution</button>
+          </div>
         </form>
-        <p><a href="/dashboard">Back to dashboard</a></p>
+        <p style="margin-top: 2em; text-align: center;"><a href="/dashboard">Back to Dashboard</a></p>
       </body>
     </html>
   `;
@@ -265,8 +374,40 @@ const renderSetupPage = ({ displayedJson, errorMessage, successMessage, viewMode
 
 router.get('/setup', async (req, res) => {
   try {
+    const ledgerStatusSnapshot = typeof ledger.getLedgerStatus === 'function'
+      ? await ledger.getLedgerStatus()
+      : { available: typeof ledger.isAvailable === 'function' ? ledger.isAvailable() : false, type: typeof ledger.ledgerType === 'function' ? ledger.ledgerType() : 'unknown', height: typeof ledger.getLedgerHeight === 'function' ? await ledger.getLedgerHeight() : 0 };
+
     const latest = await constitutionStore.getLatestConstitution().catch(() => null);
-    return res.type('text/html').send(renderSetupPage({ latestExists: Boolean(latest), latestSavedAt: latest ? latest.created_at : null }));
+    const dataDir = path.join(__dirname, '../../data');
+    const ledgerHeight = ledgerStatusSnapshot.height || 0;
+    const ledgerAvailable = Boolean(ledgerStatusSnapshot.available);
+    const ledgerType = ledgerStatusSnapshot.type || 'unknown';
+    let dirWritable = false;
+    try {
+      const testFile = path.join(dataDir, `.setup-test-${Date.now()}.tmp`);
+      fs.writeFileSync(testFile, 'ok', 'utf8');
+      fs.unlinkSync(testFile);
+      dirWritable = true;
+    } catch (e) {
+      dirWritable = false;
+    }
+
+    const ledgerStatus = {
+      available: ledgerAvailable,
+      type: ledgerType,
+      height: ledgerHeight,
+      dataDir: dataDir,
+      writable: dirWritable,
+    };
+
+    return res.type('text/html').send(
+      renderSetupPage({
+        latestExists: Boolean(latest),
+        latestSavedAt: latest ? latest.created_at : null,
+        ledgerStatus,
+      })
+    );
   } catch (err) {
     return res.status(500).type('text/html').send(`Error loading setup: ${err.message}`);
   }
@@ -282,18 +423,38 @@ router.post('/setup', async (req, res) => {
     const requestToken = getAdminTokenFromRequest(req);
     const adminToken = getAdminToken();
     if (!adminToken || requestToken !== adminToken) {
-      return res.status(401).type('text/html').send(renderSetupPage({ latestExists, latestSavedAt, errorMessage: 'Unauthorized: invalid admin token' }));
+      return res.status(401).type('text/html').send(
+        renderSetupPage({
+          latestExists,
+          latestSavedAt,
+          errorMessage: 'Unauthorized: invalid admin token',
+        })
+      );
     }
 
     res.setHeader('Set-Cookie', createAdminAuthCookie(adminToken));
 
     if (action === 'view') {
       if (!latest) {
-        return res.type('text/html').send(renderSetupPage({ latestExists, latestSavedAt, errorMessage: 'No constitution has been saved yet.', viewMode: false }));
+        return res.type('text/html').send(
+          renderSetupPage({
+            latestExists,
+            latestSavedAt,
+            errorMessage: 'No constitution has been saved yet.',
+            viewMode: false,
+          })
+        );
       }
 
       const displayedJson = latest && latest.constitution ? JSON.stringify(latest.constitution, null, 2) : '';
-      return res.type('text/html').send(renderSetupPage({ latestExists, latestSavedAt, viewMode: true, displayedJson }));
+      return res.type('text/html').send(
+        renderSetupPage({
+          latestExists,
+          latestSavedAt,
+          viewMode: true,
+          displayedJson,
+        })
+      );
     }
 
     const adminTokenValue = req.body && (req.body.admin_token || req.body.board_pass || req.body.ADMIN_TOKEN)
@@ -305,34 +466,72 @@ router.post('/setup', async (req, res) => {
     const briefVersionValue = req.body && req.body.brief_version ? String(req.body.brief_version).trim() : process.env.BRIEF_VERSION || '0.0.1';
 
     const envUpdates = {};
+    const envWrittenKeys = [];
     if (adminTokenValue) {
       envUpdates.ADMIN_TOKEN = adminTokenValue;
       envUpdates.BOARD_PASS = adminTokenValue;
+      envWrittenKeys.push('ADMIN_TOKEN', 'BOARD_PASS');
     }
-    if (masterKeyValue) envUpdates.MASTER_KEY = masterKeyValue;
-    if (nodePrivateKeyValue) envUpdates.NODE_PRIVATE_KEY = nodePrivateKeyValue;
-    if (nodeIdValue) envUpdates.NODE_ID = nodeIdValue;
-    if (briefVersionValue) envUpdates.BRIEF_VERSION = briefVersionValue;
+    if (masterKeyValue) {
+      envUpdates.MASTER_KEY = masterKeyValue;
+      envWrittenKeys.push('MASTER_KEY');
+    }
+    if (nodePrivateKeyValue) {
+      envUpdates.NODE_PRIVATE_KEY = nodePrivateKeyValue;
+      envWrittenKeys.push('NODE_PRIVATE_KEY');
+    }
+    if (nodeIdValue) {
+      envUpdates.NODE_ID = nodeIdValue;
+      envWrittenKeys.push('NODE_ID');
+    }
+    if (briefVersionValue) {
+      envUpdates.BRIEF_VERSION = briefVersionValue;
+      envWrittenKeys.push('BRIEF_VERSION');
+    }
+
+    // Auto-generate CONSTITUTION_KEY if not already set
+    if (!process.env.CONSTITUTION_KEY) {
+      const crypto = require('crypto');
+      envUpdates.CONSTITUTION_KEY = crypto.randomBytes(32).toString('hex');
+      envWrittenKeys.push('CONSTITUTION_KEY (auto-generated)');
+    }
+
     if (Object.keys(envUpdates).length > 0) {
       writeEnvFile(envUpdates);
     }
 
     const constitutionText = req.body && req.body.constitution ? String(req.body.constitution).trim() : '';
     if (!constitutionText) {
-      return res.status(400).type('text/html').send(renderSetupPage({ latestExists, latestSavedAt, errorMessage: 'Constitution JSON is required' }));
+      return res.status(400).type('text/html').send(
+        renderSetupPage({
+          latestExists,
+          latestSavedAt,
+          errorMessage: 'Constitution JSON is required',
+        })
+      );
     }
 
     let parsed;
     try {
       parsed = JSON.parse(constitutionText);
     } catch (err) {
-      return res.status(400).type('text/html').send(renderSetupPage({ latestExists, latestSavedAt, errorMessage: 'Invalid JSON' }));
+      return res.status(400).type('text/html').send(
+        renderSetupPage({
+          latestExists,
+          latestSavedAt,
+          errorMessage: `Invalid JSON: ${err.message}`,
+        })
+      );
     }
 
     try {
       const dataDirCheck = path.join(__dirname, '../../data');
       if (!fs.existsSync(dataDirCheck)) {
-        try { fs.mkdirSync(dataDirCheck, { recursive: true }); } catch (e) { throw new Error('Failed to create data directory: ' + e.message); }
+        try {
+          fs.mkdirSync(dataDirCheck, { recursive: true });
+        } catch (e) {
+          throw new Error('Failed to create data directory: ' + e.message);
+        }
       }
       try {
         fs.accessSync(dataDirCheck, fs.constants.W_OK);
@@ -340,10 +539,17 @@ router.post('/setup', async (req, res) => {
         throw new Error('Data directory is not writable by the node process: ' + e.message);
       }
     } catch (err) {
-      return res.status(500).type('text/html').send(renderSetupPage({ latestExists, latestSavedAt, errorMessage: 'Storage path check failed: ' + err.message }));
+      return res.status(500).type('text/html').send(
+        renderSetupPage({
+          latestExists,
+          latestSavedAt,
+          errorMessage: `Storage path check failed: ${err.message}`,
+        })
+      );
     }
 
     const record = await constitutionStore.storeConstitution({ constitution: parsed });
+    envWrittenKeys.push('CONSTITUTION (saved)');
 
     let ledgerEntry = null;
     try {
@@ -352,22 +558,63 @@ router.post('/setup', async (req, res) => {
         content_plain: JSON.stringify(parsed),
       });
     } catch (ledgerErr) {
-      // ledger should not block constitution save, but capture failure in messaging
       console.error('Ledger append failed:', ledgerErr.message || ledgerErr);
     }
 
     const savedLatest = await constitutionStore.getLatestConstitution().catch(() => null);
     const savedLatestAt = savedLatest ? savedLatest.created_at : latestSavedAt;
-    const successMessage = ledgerEntry ? 'Constitution saved and ledger record created.' : 'Constitution saved successfully. Ledger record could not be created.';
+    const successMessage = ledgerEntry
+      ? 'Constitution saved and ledger record created. Your Dencken network is configured.'
+      : 'Constitution saved successfully. Ledger record could not be created, but your network is ready.';
 
-    return res.type('text/html').send(renderSetupPage({ latestExists: Boolean(savedLatest), latestSavedAt: savedLatestAt, viewMode: false, successMessage }));
+    const dataDir = path.join(__dirname, '../../data');
+    const ledgerStatusSnapshot = typeof ledger.getLedgerStatus === 'function'
+      ? await ledger.getLedgerStatus()
+      : { available: typeof ledger.isAvailable === 'function' ? ledger.isAvailable() : false, type: typeof ledger.ledgerType === 'function' ? ledger.ledgerType() : 'unknown', height: typeof ledger.getLedgerHeight === 'function' ? await ledger.getLedgerHeight() : 0 };
+    const ledgerHeight = ledgerStatusSnapshot.height || 0;
+    const ledgerAvailable = Boolean(ledgerStatusSnapshot.available);
+    const ledgerType = ledgerStatusSnapshot.type || 'unknown';
+    let dirWritable = false;
+    try {
+      const testFile = path.join(dataDir, `.setup-test-${Date.now()}.tmp`);
+      fs.writeFileSync(testFile, 'ok', 'utf8');
+      fs.unlinkSync(testFile);
+      dirWritable = true;
+    } catch (e) {
+      dirWritable = false;
+    }
+
+    const ledgerStatus = {
+      available: ledgerAvailable,
+      type: ledgerType,
+      height: ledgerHeight,
+      dataDir: dataDir,
+      writable: dirWritable,
+    };
+
+    return res.type('text/html').send(
+      renderSetupPage({
+        confirmMode: true,
+        successMessage,
+        ledgerStatus,
+        envWrittenKeys,
+      })
+    );
   } catch (err) {
-    return res.status(500).type('text/html').send(renderSetupPage({ latestExists, latestSavedAt, errorMessage: 'Failed to store constitution: ' + err.message }));
+    return res.status(500).type('text/html').send(
+      renderSetupPage({
+        latestExists,
+        latestSavedAt,
+        errorMessage: `Failed to store constitution: ${err.message}`,
+      })
+    );
   }
 });
 
 router.get('/cycle/status', requireAdminAuth, async (req, res) => {
   try {
+    const constitution = await loadConfigConstitution().catch(() => null);
+    const agents = loadAgentPool(constitution);
     const entries = await readLedgerEntries({ limit: 20, offset: 0 });
 
     const cycleEntries = entries.filter((entry) => [
@@ -381,7 +628,13 @@ router.get('/cycle/status', requireAdminAuth, async (req, res) => {
       return { ...entry, verification };
     });
 
-    return res.json({ ok: true, cycle_entries: verified });
+    return res.json({
+      ok: true,
+      constitution_loaded: Boolean(constitution),
+      constitution: constitution || null,
+      available_agents: agents,
+      cycle_entries: verified,
+    });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
@@ -405,6 +658,12 @@ router.get('/dashboard', async (req, res) => {
     }
 
     const diagData = await (async () => {
+      if (typeof ledger.getLedgerStatus === 'function') {
+        await ledger.getLedgerStatus();
+      } else if (typeof ledger.ensureLedgerReady === 'function') {
+        await ledger.ensureLedgerReady();
+      }
+
       const dataDir = path.join(__dirname, '../../data');
       const tmpFile = path.join(dataDir, `.diag-${Date.now()}.tmp`);
       const privateKeyInfo = ledger.getPrivateKeyInfo ? ledger.getPrivateKeyInfo() : null;
@@ -418,14 +677,18 @@ router.get('/dashboard', async (req, res) => {
           : { ok: null, error: null };
         return { entry, verification, hasSignature };
       });
+      const ledgerStatusSnapshot = typeof ledger.getLedgerStatus === 'function'
+        ? await ledger.getLedgerStatus()
+        : { available: typeof ledger.isAvailable === 'function' ? ledger.isAvailable() : false, type: typeof ledger.ledgerType === 'function' ? ledger.ledgerType() : 'unknown' };
+
       const result = {
         //node_id: getNodeId(),
         //node_meta: nodeMeta,
         //node_public_key: nodePublicKey,
         //node_public_key_present: Boolean(nodePublicKey),
         ledger_module_loaded: typeof ledger !== 'undefined',
-        ledger_available: typeof ledger.isAvailable === 'function' ? ledger.isAvailable() : false,
-        ledger_type: typeof ledger.ledgerType === 'function' ? ledger.ledgerType() : 'unknown',
+        ledger_available: Boolean(ledgerStatusSnapshot.available),
+        ledger_type: ledgerStatusSnapshot.type || 'unknown',
         data_dir_exists: fs.existsSync(dataDir),
         data_dir_writable: false,
         write_error: null,

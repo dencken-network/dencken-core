@@ -14,62 +14,100 @@ const dbPath = path.join(dataDir, 'ledger.db');
 
 let db = null;
 let available = false;
+let sqliteReady = false;
+let sqliteProven = false;
+let initPromise = null;
 
-const initLedger = () => {
-  if (!sqlite3) {
-    console.warn('sqlite3 not installed; ledger disabled');
-    available = false;
-    return;
-  }
-
-  try {
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    db = new sqlite3.Database(dbPath, (err) => {
-      if (err) {
-        console.error('Failed to open ledger database:', err.message);
-        available = false;
-        db = null;
-        return;
-      }
-
-      const sql = `
-        CREATE TABLE IF NOT EXISTS ledger_entries (
-          id TEXT PRIMARY KEY,
-          created_at TEXT NOT NULL,
-          record_type TEXT NOT NULL,
-          brief_version TEXT,
-          content_hash TEXT,
-          content_encrypted TEXT,
-          author_pubkey TEXT,
-          signature TEXT,
-          prev_hash TEXT,
-          status TEXT,
-          board_note TEXT
-        );
-      `;
-
-      db.run(sql, (err2) => {
-        if (err2) {
-          console.error('Failed to initialize ledger schema:', err2.message);
-          available = false;
-          db = null;
-          return;
-        }
-        available = true;
-      });
-    });
-  } catch (err) {
-    console.error('Ledger initialization error:', err.message);
-    available = false;
-    db = null;
+const markSqliteUnavailable = (message) => {
+  available = false;
+  sqliteReady = false;
+  sqliteProven = false;
+  db = null;
+  initPromise = null;
+  if (message) {
+    console.error(message);
   }
 };
 
+const ensureLedgerReady = async () => {
+  if (!sqlite3) {
+    sqliteReady = false;
+    sqliteProven = false;
+    available = false;
+    db = null;
+    return false;
+  }
+
+  if (sqliteReady && available && db) {
+    return true;
+  }
+
+  if (!initPromise) {
+    initPromise = new Promise((resolve) => {
+      sqliteReady = false;
+      sqliteProven = false;
+      available = false;
+
+      try {
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+
+        db = new sqlite3.Database(dbPath, (err) => {
+          if (err) {
+            markSqliteUnavailable(`Failed to open ledger database: ${err.message}`);
+            resolve(false);
+            return;
+          }
+
+          const sql = `
+            CREATE TABLE IF NOT EXISTS ledger_entries (
+              id TEXT PRIMARY KEY,
+              created_at TEXT NOT NULL,
+              record_type TEXT NOT NULL,
+              brief_version TEXT,
+              content_hash TEXT,
+              content_encrypted TEXT,
+              author_pubkey TEXT,
+              signature TEXT,
+              prev_hash TEXT,
+              status TEXT,
+              board_note TEXT
+            );
+          `;
+
+          db.run(sql, (err2) => {
+            if (err2) {
+              markSqliteUnavailable(`Failed to initialize ledger schema: ${err2.message}`);
+              resolve(false);
+              return;
+            }
+
+            db.get('SELECT 1 AS ok', (probeErr) => {
+              if (probeErr) {
+                markSqliteUnavailable(`SQLite probe failed: ${probeErr.message}`);
+                resolve(false);
+                return;
+              }
+              available = true;
+              sqliteReady = true;
+              sqliteProven = true;
+              resolve(true);
+            });
+          });
+        });
+      } catch (err) {
+        markSqliteUnavailable(`Ledger initialization error: ${err.message}`);
+        resolve(false);
+      }
+    });
+  }
+
+  return initPromise;
+};
+
 // Attempt to initialize ledger but do not throw on failure.
-initLedger();
+ensureLedgerReady().catch(() => false);
 
 const fallbackAvailable = () => {
   try {
@@ -101,8 +139,10 @@ const resetLedgerStorage = async () => {
     const finalizeReset = () => {
       db = null;
       available = false;
+      sqliteReady = false;
+      initPromise = null;
       cleanupLedgerFiles();
-      initLedger();
+      ensureLedgerReady();
       resolve(true);
     };
 
@@ -119,20 +159,43 @@ const resetLedgerStorage = async () => {
   });
 };
 
-const isAvailable = () => available || fallbackAvailable();
+const isSqliteReallyAvailable = () => {
+  if (!sqliteProven || !sqliteReady || !available || !db) return false;
+  try {
+    return typeof db.all === 'function' && typeof db.run === 'function';
+  } catch (err) {
+    return false;
+  }
+};
+
+const getLedgerStatus = async () => {
+  await ensureLedgerReady();
+  const sqliteAvailable = isSqliteReallyAvailable();
+  const fallbackAvailableNow = fallbackAvailable();
+  const availableNow = sqliteAvailable || fallbackAvailableNow;
+  const type = sqliteAvailable ? 'sqlite' : (fallbackAvailableNow ? 'sqlite fallback' : 'unavailable');
+  return {
+    available: availableNow,
+    type,
+    height: await getLedgerHeight(),
+  };
+};
+
+const isAvailable = () => isSqliteReallyAvailable() || fallbackAvailable();
 
 const ledgerType = () => {
-  if (available) return 'sqlite';
+  if (isSqliteReallyAvailable()) return 'sqlite';
   if (fallbackAvailable()) return 'sqlite fallback';
   return 'unavailable';
 };
 
 const getLedgerHeight = () => {
   return new Promise((resolve, reject) => {
-    if (available && db) {
+    if (available && db && sqliteProven) {
       return db.get('SELECT COUNT(*) AS count FROM ledger_entries', (err, row) => {
         if (err) {
           console.error('Failed to query ledger height:', err.message);
+          markSqliteUnavailable(`SQLite query failed while reading height: ${err.message}`);
           return resolve(0);
         }
         return resolve(row ? row.count : 0);
@@ -160,7 +223,7 @@ const getLedgerHeight = () => {
 
 const getEntries = ({ limit = 50, offset = 0 } = {}) => {
   return new Promise((resolve, reject) => {
-    if (!available || !db) {
+    if (!available || !db || !sqliteProven) {
       return resolve([]);
     }
 
@@ -170,6 +233,7 @@ const getEntries = ({ limit = 50, offset = 0 } = {}) => {
       (err, rows) => {
         if (err) {
           console.error('Failed to read ledger entries:', err.message);
+          markSqliteUnavailable(`SQLite query failed while reading entries: ${err.message}`);
           return resolve([]);
         }
         resolve(rows);
@@ -396,6 +460,8 @@ const readFallbackEntries = ({ limit = 50, offset = 0 } = {}) => {
   }
 };
 
+module.exports.ensureLedgerReady = ensureLedgerReady;
+
 const verifyEntrySignature = (entry) => {
   if (!entry || !entry.signature || !entry.author_pubkey || !entry.content_hash) {
     return { ok: false, error: 'Missing signature, author_pubkey, or content_hash' };
@@ -418,6 +484,7 @@ const verifyEntrySignature = (entry) => {
 
 module.exports.isAvailable = isAvailable;
 module.exports.ledgerType = ledgerType;
+module.exports.getLedgerStatus = getLedgerStatus;
 module.exports.getLedgerHeight = getLedgerHeight;
 module.exports.getEntries = getEntries;
 module.exports.appendFallbackRecord = appendFallbackRecord;
@@ -426,8 +493,8 @@ module.exports.verifyEntrySignature = verifyEntrySignature;
 module.exports.getPrivateKeyInfo = getPrivateKeyInfo;
 // appendRecord: unified append used by application code. Chooses sqlite path if available else fallback
 const appendRecord = async (opts = {}) => {
-  // If sqlite is available, insert via db
-  if (available && db) {
+  // Only use SQLite when it has been proven functional.
+  if (available && db && sqliteProven) {
     return new Promise((resolve, reject) => {
       const id = uuid();
       const created_at = new Date().toISOString();
@@ -457,7 +524,11 @@ const appendRecord = async (opts = {}) => {
 
       const sql = `INSERT INTO ledger_entries (id, created_at, record_type, brief_version, content_hash, content_encrypted, author_pubkey, signature, prev_hash, status, board_note) VALUES (?,?,?,?,?,?,?,?,?,?,?)`;
       db.run(sql, [id, created_at, record_type, brief_version, content_hash, content_encrypted, author_pubkey, signature, prev_hash, status, null], function (err) {
-        if (err) return resolve(null);
+        if (err) {
+          console.error('SQLite insert failed, falling back to JSONL ledger:', err.message);
+          markSqliteUnavailable(`SQLite insert failed: ${err.message}`);
+          return resolve(appendFallbackRecord(opts));
+        }
         resolve({ id, created_at, record_type, brief_version, content_hash, content_encrypted, author_pubkey, signature, prev_hash, status, board_note: null });
       });
     });
